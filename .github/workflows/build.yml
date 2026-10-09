@@ -126,29 +126,37 @@ jobs:
 
       - name: Verify fpk contents
         run: |
+          set -e
           FPK="$(ls packaging/fnOS/dist/zcode-*.fpk)"
           echo "fpk: $FPK ($(du -h "$FPK" | cut -f1))"
           tar -tzf "$FPK" | head -20
           echo "--- 版本 ---"
           tar -xOf "$FPK" manifest | grep -E "^version|^service_port|^install_dep_apps"
+          echo "--- 解包 app.tgz ---"
+          # 注意：无 fnpack 时 build.sh 走 `tar -czf . ` 等价打包，条目带 "./" 前缀；
+          # fnpack 产物则不带。两种都要能处理，所以整包解出来再判断，别依赖条目前缀。
+          rm -rf /tmp/fpkcheck && mkdir -p /tmp/fpkcheck
+          tar -xzf "$FPK" -C /tmp/fpkcheck app.tgz
+          tar -xzf /tmp/fpkcheck/app.tgz -C /tmp/fpkcheck
           echo "--- 网关接入层必须在包内 ---"
-          tar -xzf "$FPK" app.tgz
-          tar -tzf app.tgz | grep -E "^gateway/" || { echo "✗ 缺 gateway/"; exit 1; }
+          [ -f /tmp/fpkcheck/gateway/gateway.mjs ] || { echo "✗ 缺 gateway/gateway.mjs"; exit 1; }
+          [ -f /tmp/fpkcheck/gateway/url-compat.js ] || { echo "✗ 缺 gateway/url-compat.js"; exit 1; }
           echo "--- ui/config 必须指向网关 ---"
-          tar -xzf app.tgz ui/config
-          grep -q '"gatewaySocket": "zcode.sock"' ui/config || { echo "✗ gatewaySocket 不对"; exit 1; }
-          grep -q '"gatewayPrefix": "/app/zcode"' ui/config || { echo "✗ gatewayPrefix 不对"; exit 1; }
+          grep -q '"gatewaySocket": "zcode.sock"' /tmp/fpkcheck/ui/config || { echo "✗ gatewaySocket 不对"; exit 1; }
+          grep -q '"gatewayPrefix": "/app/zcode"' /tmp/fpkcheck/ui/config || { echo "✗ gatewayPrefix 不对"; exit 1; }
+          echo "--- 入口令牌脚本必须认识保留首段 ---"
+          grep -q 'zcode-fnos-entry-token' /tmp/fpkcheck/runtime/web/index.html || { echo "✗ 未注入入口令牌脚本"; exit 1; }
+          grep -q 'RESERVED' /tmp/fpkcheck/runtime/web/index.html || { echo "✗ 令牌脚本未排除保留首段"; exit 1; }
           echo "✓ 包结构自检通过"
 
       - name: Smoke-test gateway layer
         run: |
-          # 网关接入层不依赖 ZCode server 也能起：起不来会立刻报错。
-          # 这里只验证它能监听 unix socket 并对未知前缀返回 404、
-          # 对 /app/zcode 前缀的请求尝试转发（后端不在 → 502，属预期）。
+          # 网关接入层不依赖 ZCode server 也能起：监听失败会立刻退出。
+          # 验证它能监听 unix socket、前缀外请求 404、前缀内请求会转发到后端
+          # （后端不存在 → 502，属预期，说明转发路径正确）。
           set -e
-          tar -xzf "$(ls packaging/fnOS/dist/zcode-*.fpk)" app.tgz
-          tar -xzf app.tgz gateway/
-          node gateway/gateway.mjs --socket /tmp/zcode-smoke.sock \
+          GW_DIR=/tmp/fpkcheck/gateway
+          node "$GW_DIR/gateway.mjs" --socket /tmp/zcode-smoke.sock \
             --prefix /app/zcode --port 1 --token smoke --log /tmp/zcode-smoke.log &
           GW=$!
           for i in $(seq 1 15); do [ -S /tmp/zcode-smoke.sock ] && break; sleep 1; done
