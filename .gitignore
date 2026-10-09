@@ -1,4 +1,7 @@
 # 构建产物
+# dist 默认在仓库上一级（workspace 根的 dist/）；CI 用 DIST_DIR 指到 checkout 内，
+# 所以两处都要忽略，避免 80MB 级 fpk / runtime 包被误提交。
+/dist/
 packaging/fnOS/dist/
 packaging/fnOS/.build-staging/
 out/

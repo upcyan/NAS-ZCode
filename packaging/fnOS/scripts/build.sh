@@ -2,7 +2,12 @@
 #
 # 构建飞牛 fnOS 原生应用包（.fpk）
 # ================================
-# 产物：packaging/fnOS/dist/zcode-<version>.fpk
+# 产物：<dist>/zcode-<version>.fpk
+#
+# dist 默认在**仓库的上一级**（即 workspace 根的 dist/），与源码分离：
+#   /vol1/1000/deepseek_harness/dsh-zcode/dist/zcode-<version>.fpk
+# 可用 DIST_DIR 覆盖（CI 里指到 checkout 内，避免写到工作区之外）：
+#   DIST_DIR=/abs/path bash packaging/fnOS/scripts/build.sh
 #
 # payload 不是本仓库的源码，而是 ZCode 官方的 Web 运行时包
 # （zcode-<version>.tar.gz，由上游 `pnpm build:zcode` 产出）：
@@ -13,7 +18,7 @@
 # 因此单个包即可通吃 x86_64 / arm64（platform = all）。
 #
 # 用法：
-#   bash packaging/fnOS/scripts/build.sh                       # 用 dist/runtime/ 里已就位的 runtime
+#   bash packaging/fnOS/scripts/build.sh                       # 用 <dist>/runtime/ 里已就位的 runtime
 #   bash packaging/fnOS/scripts/build.sh --runtime <tar.gz>    # 指定官方运行时包
 #   ZCODE_VERSION=3.14.1 bash packaging/fnOS/scripts/build.sh  # 覆盖版本号
 #
@@ -27,7 +32,19 @@ PKG_DIR="$(cd "${HERE}/.." && pwd)"                 # packaging/fnOS
 REPO="$(cd "${PKG_DIR}/../.." && pwd)"              # 仓库根
 APP="zcode"
 
-DIST="${PKG_DIR}/dist"
+# dist 默认放在仓库**上一级**（workspace 根的 dist/），把 80MB 级产物与源码分开。
+# CI 里仓库根就是 checkout 根，写到上一级会落到 runner 的工作目录之外，
+# 所以 workflow 显式传 DIST_DIR 指回 checkout 内。
+if [ -n "${DIST_DIR:-}" ]; then
+    # 允许传相对路径（相对调用者的当前目录），统一转成绝对路径，
+    # 因为后面 fnpack 会在子 shell 里 cd 到别处，相对路径会解析错。
+    case "${DIST_DIR}" in
+        /*) DIST="${DIST_DIR}" ;;
+        *)  DIST="$(cd "$(dirname "${DIST_DIR}")" 2>/dev/null && pwd)/$(basename "${DIST_DIR}")" ;;
+    esac
+else
+    DIST="$(cd "${REPO}/.." && pwd)/dist"
+fi
 STAGE="${PKG_DIR}/.build-staging/${APP}"            # 交给 fnpack 的目录
 APP_DIR="${STAGE}/app"                              # 应用内容树（会打成 app.tgz）
 
@@ -59,7 +76,7 @@ if [ "${1:-}" = "--runtime" ]; then
     RUNTIME_TGZ="${2:-}"
 fi
 if [ -z "${RUNTIME_TGZ}" ]; then
-    # 默认取 dist/runtime/ 下最新的官方包
+    # 默认取 <dist>/runtime/ 下最新的官方包
     RUNTIME_TGZ="$(ls -t "${DIST}"/runtime/zcode-*.tar.gz 2>/dev/null | head -n 1 || true)"
 fi
 if [ -z "${RUNTIME_TGZ}" ] || [ ! -f "${RUNTIME_TGZ}" ]; then
@@ -69,7 +86,7 @@ if [ -z "${RUNTIME_TGZ}" ] || [ ! -f "${RUNTIME_TGZ}" ]; then
     echo "     pnpm bootstrap && pnpm build:zcode --base-url http://localhost/"
     echo "     产物在 dist/zcode/releases/<ver>/zcode-<ver>.tar.gz"
     echo "  2. GitHub Actions：本仓库 workflow 会自动构建并作为 artifact 上传"
-    echo "  然后放到 packaging/fnOS/dist/runtime/ 或用 --runtime 传入"
+    echo "  然后放到 ${DIST}/runtime/ 或用 --runtime 传入"
     exit 1
 fi
 echo "[build] 运行时包：${RUNTIME_TGZ} ($(du -h "${RUNTIME_TGZ}" | cut -f1))"
@@ -215,7 +232,7 @@ FINAL="${DIST}/zcode-${VERSION}${VARIANT}.fpk"
 rm -f "${FINAL}"
 
 if [ -n "${FNPACK}" ]; then
-    # fnpack 把产物写在它自己的 CWD，所以 cd 到 dist 再调用
+    # fnpack 把产物写在它自己的 CWD，所以 cd 到 DIST 再调用
     echo "[build] fnpack build → ${FINAL}"
     ( cd "${DIST}" && "${FNPACK}" build -d "$(winpath "${STAGE}")" )
     if [ ! -f "${FINAL}" ] && [ -f "${DIST}/zcode.fpk" ]; then

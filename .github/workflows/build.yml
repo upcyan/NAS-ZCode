@@ -122,12 +122,19 @@ jobs:
           path: packaging/fnOS/dist/runtime
 
       - name: Build fpk
+        # build.sh 的 dist 默认在仓库上一级（本地用来把 80MB 级产物与源码分开）；
+        # CI 里仓库根就是 checkout 根，写到上一级会落到 runner 工作目录之外，
+        # 后面的校验与上传都会找不到文件，所以这里显式指回 checkout 内。
+        env:
+          DIST_DIR: ${{ github.workspace }}/packaging/fnOS/dist
         run: bash packaging/fnOS/scripts/build.sh
 
       - name: Verify fpk contents
+        env:
+          DIST_DIR: ${{ github.workspace }}/packaging/fnOS/dist
         run: |
           set -e
-          FPK="$(ls packaging/fnOS/dist/zcode-*.fpk)"
+          FPK="$(ls "$DIST_DIR"/zcode-*.fpk)"
           echo "fpk: $FPK ($(du -h "$FPK" | cut -f1))"
           tar -tzf "$FPK" | head -20
           echo "--- 版本 ---"
@@ -173,6 +180,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: zcode-fpk-${{ needs.runtime.outputs.version }}
+          # 与 Build fpk 的 DIST_DIR 保持一致
           path: packaging/fnOS/dist/zcode-*.fpk
           retention-days: 30
           if-no-files-found: error

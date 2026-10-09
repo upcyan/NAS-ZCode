@@ -84,18 +84,35 @@ ZCode 前端把同源资源与接口写成**根绝对路径**（`/assets/…`、
 
 ## 构建
 
+产物目录 **`dist/` 默认在仓库的上一级**（与源码分开，避免 80MB 级文件混在源码树里）：
+
+```
+<仓库上一级>/dist/
+├── zcode-<ver>.fpk        # 打包产物
+└── runtime/               # 官方 Web 运行时包（构建输入）
+```
+
 ```bash
 # 1. 获取官方 Web 运行时包（zcode-<ver>.tar.gz）：
 #    a) GitHub Actions：本仓库 push 后自动构建（upstream.version 钉住上游版本）
 #    b) 本地构建上游：clone zai-org/ZCode，Node 24.14.0 + pnpm 10.33.2
 #       pnpm bootstrap && pnpm build:zcode --base-url http://127.0.0.1/zcode/
 #       产物在 dist/zcode/releases/<ver>/zcode-<ver>.tar.gz
-#    把 tar.gz 放到 packaging/fnOS/dist/runtime/
+#    把 tar.gz 放到 <仓库上一级>/dist/runtime/
 
 # 2. 打 fpk（Windows Git Bash / Linux 均可，需 fnpack）
 bash packaging/fnOS/scripts/build.sh
-# 产物：packaging/fnOS/dist/zcode-<ver>.fpk
+# 产物：<仓库上一级>/dist/zcode-<ver>.fpk
 ```
+
+想改产物位置就用 `DIST_DIR`（支持相对路径）：
+
+```bash
+DIST_DIR=/path/to/out bash packaging/fnOS/scripts/build.sh
+```
+
+> CI 里仓库根就是 checkout 根，默认写到上一级会落到 runner 工作目录之外，
+> 所以 workflow 显式传 `DIST_DIR=${{ github.workspace }}/packaging/fnOS/dist`。
 
 也可以指定运行时包路径：`bash packaging/fnOS/scripts/build.sh --runtime /path/to/zcode-3.14.1.tar.gz`。
 
