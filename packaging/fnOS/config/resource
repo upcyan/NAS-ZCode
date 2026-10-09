@@ -2,10 +2,20 @@
   "data-share": {
     "shares": [
       {
-        "name": "zcode"
+        "name": "zcode",
+        "permission": {
+          "rw": [
+            "zcode"
+          ]
+        }
       },
       {
-        "name": "zcode/workspace"
+        "name": "zcode/workspace",
+        "permission": {
+          "rw": [
+            "zcode"
+          ]
+        }
       }
     ]
   }
