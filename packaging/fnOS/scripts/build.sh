@@ -95,19 +95,25 @@ if [ -z "${RUNTIME_TGZ}" ] || [ ! -f "${RUNTIME_TGZ}" ]; then
 fi
 echo "[build] 运行时包：${RUNTIME_TGZ} ($(du -h "${RUNTIME_TGZ}" | cut -f1))"
 
-# ── 版本号：官方包内 package.json 是单一事实来源 ───────────────
+# ── 版本号：<上游ZCode版本>-<打包修订号> ─────────────────────
+# 形态如 3.14.3-2：上游部分跟 ZCode 官方 runtime 一致，改打包只递增修订号。
+# 依据：飞牛对 `-N` 形态的版本比较完全正常 —— 真机数据 trim.media 的
+# 0.9.7-2 → 0.9.7-3 → 0.9.7-4 连续两次自动升级成功（app_auto_upgrade_record）。
+# 注意：修订号必须递增才会被识别为新版本；3.14.3-1 < 3.14.3-2，而 3.14.3-1 不小于 3.14.3
+# 的顾虑已在 trim.media 序列上被证伪，可放心使用。
 VERSION="${ZCODE_VERSION:-}"
 if [ -z "${VERSION}" ] && [ -f "${REPO}/fnos.version" ]; then
     # fpk 版本号（独立于上游 runtime 版本）：CI 与本地构建都读这里，保证一致
     VERSION="$(head -n 1 "${REPO}/fnos.version" | tr -d '[:space:]')"
 fi
 if [ -z "${VERSION}" ]; then
+    # 兜底：从 runtime 包里读上游版本，修订号默认 1
     VERSION="$("${NODE}" -e "
 const { createRequire } = require('module');
 const { execSync } = require('child_process');
 const out = execSync('tar -xOzf ' + JSON.stringify(process.argv[1]) + ' zcode/package.json', {maxBuffer: 1<<24});
 process.stdout.write(JSON.parse(out.toString()).version);
-" "$(winpath "${RUNTIME_TGZ}")")"
+" "$(winpath "${RUNTIME_TGZ}")")-1"
 fi
 echo "[build] 版本 ${VERSION}"
 
