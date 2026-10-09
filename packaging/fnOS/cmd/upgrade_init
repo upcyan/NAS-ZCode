@@ -1,3 +1,70 @@
 #!/bin/bash
-# 升级前：停服务。用户数据在 TRIM_PKGVAR，不受升级影响。
+# 升级前：**显式停服务**，并等进程真正退干净。
+#
+# 为什么必须在这里停：应用中心的 ctl_stop 与"替换应用文件"之间没有"等进程退出"的
+# 保证，而 ZCode 一个服务是三个进程（runner/server/agent）+ 网关接入层；runner 自己
+# 会 spawn 子进程，平台不保证回收孤儿。只要还有进程活着，后续替换应用目录就会失败，
+# 表现为前端「执行脚本出错且原因未知」（事件日志 APP_UPDATE_FAILED，REASON 为空）。
+#
+# 同机升级稳定成功的应用都在 upgrade_init 里显式停自己的服务
+# （dsh-fnos 46 次、CyanNVR 26 次均成功；本应用此前 4 次升级全部失败），本脚本对齐该做法。
+#
+# 用户数据在 TRIM_PKGVAR，不受升级影响。
+set -u
+
+APP="zcode"
+GATEWAY_ENTRY="gateway/gateway.mjs"
+
+if [ -z "${TRIM_APPDEST:-}" ]; then
+    if [ -d "/var/apps/${APP}/target" ]; then
+        TRIM_APPDEST="$(readlink -f "/var/apps/${APP}/target")"
+    else
+        TRIM_APPDEST="$(readlink -f "/var/apps/${APP}")"
+    fi
+fi
+
+### 定位 main：优先用脚本自身位置（BASH_SOURCE）。
+### 不能用 "${TRIM_APPDEST}/../cmd/main" —— TRIM_APPDEST 指向 target 软链，
+### 路径里的 ".." 会跟随软链落到 /vol1/@appcenter，那里没有 cmd 目录。
+CMD_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+MAIN="${CMD_DIR}/main"
+[ -x "${MAIN}" ] || MAIN="/var/apps/${APP}/cmd/main"
+
+### main stop 已经做了 TERM→KILL 与按绝对路径兜底清理（覆盖三个服务进程 + 网关）。
+if [ -x "${MAIN}" ]; then
+    "${MAIN}" stop > /dev/null 2>&1 || true
+fi
+
+### 兜底确认：等本应用进程全部退出。
+### 匹配串刻意用 "/runtime" 与 "/gateway/gateway.mjs"：
+### 本脚本自己的 cmdline 是 "<APP_DIR>/cmd/upgrade_init"，不含这两个串，
+### 所以 pgrep 不会匹配到自己（否则会把自己 KILL 掉、让升级流程中断）。
+PROC_PATTERNS=("${TRIM_APPDEST}/runtime" "${TRIM_APPDEST}/${GATEWAY_ENTRY}")
+
+still_alive() {
+    local p
+    for p in "${PROC_PATTERNS[@]}"; do
+        pgrep -f -- "${p}" > /dev/null 2>&1 && return 0
+    done
+    return 1
+}
+
+i=0
+while [ "${i}" -lt 15 ]; do
+    still_alive || break
+    sleep 1
+    i=$((i + 1))
+done
+
+### 仍未退出的强制清理，确保升级能继续（不残留占目录的进程）。
+if still_alive; then
+    for p in "${PROC_PATTERNS[@]}"; do
+        pkill -KILL -f -- "${p}" 2>/dev/null || true
+    done
+    sleep 1
+fi
+
+### 清掉旧 socket：新版本启动时会重新监听，残留文件会导致监听失败。
+rm -f "${TRIM_APPDEST}/zcode.sock" 2>/dev/null || true
+
 exit 0
