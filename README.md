@@ -125,6 +125,18 @@ fnos.version                 # fpk 版本号（独立于上游版本）
 > **prerelease（更小）**。所以打补丁版请用 `3.14.4` 这类递增号，**不要**用 `3.14.3-1`
 > ——否则已装用户收不到升级。
 
+## 版本与文档
+
+- `fnos.version` —— fpk 版本号（当前 `3.14.4`）。**注意**：飞牛用
+  `golang.org/x/mod/semver` 比较版本，带 `-` 的后缀会被判为 prerelease
+  （`3.14.3-1 < 3.14.3`），已装用户将收不到升级 —— 补丁版请用递增的补丁号。
+- `upstream.version` —— 钉住的上游 ZCode 提交（当前 `29628c9acd` = 上游 3.14.3）。
+  改这一行并 push，CI 会自动重建 runtime 与 fpk。
+- `docs/发布说明-v3.14.4.md` —— 本版发布说明（可直接贴到 Release）。
+- `docs/论坛发帖-ZCode-v3.14.4.md` —— 面向用户的介绍帖。
+- `docs/上游版本同步-3.14.5调研.md` —— 为什么官方 CDN 的 3.14.5 暂时追不了。
+- `docs/已知问题-套餐查询-3001.md` —— 套餐查询失败的上游成因（非本包问题）。
+
 ## 许可
 
 - ZCode：[Apache-2.0](https://github.com/zai-org/ZCode/blob/main/LICENSE)（© Z.ai）
