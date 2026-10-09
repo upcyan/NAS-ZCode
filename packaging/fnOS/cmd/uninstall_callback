@@ -1,9 +1,31 @@
 #!/bin/bash
 # 卸载后兜底：确保没有残留进程（应用服务 + 网关接入层）与遗留 socket。
 # 应用目录此时可能已被移除，所以按固定标记路径匹配，不依赖 TRIM_APPDEST。
+#
+# !! 自杀陷阱（曾导致「无法更新：执行脚本出错且原因未知」，根因实锤）：
+# 本脚本自身路径是 /var/apps/zcode/cmd/uninstall_callback，
+# 它的命令行【包含】"/var/apps/zcode/"，pgrep -f 会匹配到本脚本自己
+# （真机 strace 实测：pgrep 输出 "3572740\n3572741"，即本脚本主进程和它的子进程），
+# 随后 kill -KILL 把自己杀掉 → 升级流程中断 → 应用中心回滚旧版 → 报错。
+# 升级流程会在清旧目录阶段复用 uninstall 脚本，所以这个坑在升级时必现。
+#
+# 修复：排除自身 PID（$$）与自己的父 shell 链（$PPID），并把 pgrep 结果
+# 用进程名二次过滤（只杀 node 进程，不杀 bash）。
 APP="zcode"
+SELF=$$
+PARENT=$PPID
+
 for pid in $(pgrep -f "/@appcenter/${APP}/" 2>/dev/null; pgrep -f "/var/apps/${APP}/" 2>/dev/null); do
-    kill -KILL "${pid}" 2>/dev/null || true
+    # 跳过自己、父进程，以及本脚本的 pgrep 子进程
+    [ "${pid}" = "${SELF}" ] && continue
+    [ "${pid}" = "${PARENT}" ] && continue
+    # 只杀解释器为 node 的进程：ZCode 的服务进程全是 node，
+    # bash 类匹配到的一定是本脚本自身的进程组，跳过（防误杀其他应用脚本）。
+    exe="$(readlink -f "/proc/${pid}/exe" 2>/dev/null || true)"
+    case "${exe}" in
+        */node|*/node*) kill -KILL "${pid}" 2>/dev/null || true ;;
+        *) : ;;
+    esac
 done
 
 # 网关 socket 随应用目录一起被删，但目录若残留则手动清掉，避免下次安装监听失败。
