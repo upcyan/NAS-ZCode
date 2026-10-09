@@ -1,7 +1,7 @@
 appname               = zcode
 version               = 3.14.3
 display_name          = ZCode
-desc                  = Z.ai 开源的 AI 编程工作台（zai-org/ZCode）。飞牛原生打包版（非 Docker）：服务端跑在 NAS 上，浏览器 / 飞牛桌面直接使用完整工作台——Agent 对话、代码工作区、内置终端；登录态与工作区保存在 NAS 上，全设备共用一份。原生 Node.js 运行，复用应用中心的 Node.js v22，包内原生模块随官方预编译件分发，一个包同时支持 x86_64 与 arm64。
+desc                  = Z.ai 开源的 AI 编程工作台（zai-org/ZCode）。飞牛原生打包版（非 Docker）：服务端跑在 NAS 上，浏览器 / 飞牛桌面直接使用完整工作台——Agent 对话、代码工作区、内置终端；登录态与工作区保存在 NAS 上，全设备共用一份。原生 Node.js 运行，复用应用中心的 Node.js v22，包内原生模块随官方预编译件分发，一个包同时支持 x86_64 与 arm64。局域网直连与 fnConnect 远程均可访问（接入飞牛统一网关，远程无需映射端口）。
 platform              = all
 source                = thirdparty
 developer             = Z.ai (zai-org)
@@ -17,4 +17,4 @@ service_port          = 8988
 install_dep_apps      = nodejs_v22
 ctl_stop              = true
 checkport             = true
-changelog             = 修复重装或更换访问令牌后仍报 WebSocket 连接失败：浏览器残留的旧 zcode_lite_token cookie 会让页面带旧令牌握手。入口页脚本改为用当前入口路径的令牌覆盖旧 cookie（仅单段路径，不误伤 OAuth 回跳路由），无需手动清缓存。
+changelog             = 支持非局域网（fnConnect / 手机 App 远程）访问：桌面入口改为飞牛统一网关路径 /app/zcode，由包内网关接入层经面板网关转发，远程不再依赖裸端口 8988，也无需端口映射或在 URL 里带访问令牌（网关已完成面板登录态校验）。接入层会剥离前缀、改写前端根绝对路径（/assets、/api、/ws）并转发 WebSocket。局域网直连 http://<NAS_IP>:8988 与访问令牌机制保持不变。注：本版为打包修订，内置 ZCode 运行时仍为上游 3.14.3。

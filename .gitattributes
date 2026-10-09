@@ -4,6 +4,9 @@ packaging/fnOS/scripts/* text eol=lf
 packaging/fnOS/manifest text eol=lf
 packaging/fnOS/config/* text eol=lf
 packaging/fnOS/ui/config text eol=lf
+# 网关接入层在飞牛上由 node 执行，也须 LF
+packaging/fnOS/gateway/* text eol=lf
+fnos.version text eol=lf
 upstream.version text eol=lf
 .gitattributes text eol=lf
 .gitignore text eol=lf

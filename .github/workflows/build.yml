@@ -6,6 +6,7 @@ on:
     paths:
       - ".github/workflows/build.yml"
       - "upstream.version"
+      - "fnos.version"
       - "packaging/**"
   workflow_dispatch:
     inputs:
@@ -128,10 +129,42 @@ jobs:
           FPK="$(ls packaging/fnOS/dist/zcode-*.fpk)"
           echo "fpk: $FPK ($(du -h "$FPK" | cut -f1))"
           tar -tzf "$FPK" | head -20
+          echo "--- 版本 ---"
+          tar -xOf "$FPK" manifest | grep -E "^version|^service_port|^install_dep_apps"
+          echo "--- 网关接入层必须在包内 ---"
+          tar -xzf "$FPK" app.tgz
+          tar -tzf app.tgz | grep -E "^gateway/" || { echo "✗ 缺 gateway/"; exit 1; }
+          echo "--- ui/config 必须指向网关 ---"
+          tar -xzf app.tgz ui/config
+          grep -q '"gatewaySocket": "zcode.sock"' ui/config || { echo "✗ gatewaySocket 不对"; exit 1; }
+          grep -q '"gatewayPrefix": "/app/zcode"' ui/config || { echo "✗ gatewayPrefix 不对"; exit 1; }
+          echo "✓ 包结构自检通过"
+
+      - name: Smoke-test gateway layer
+        run: |
+          # 网关接入层不依赖 ZCode server 也能起：起不来会立刻报错。
+          # 这里只验证它能监听 unix socket 并对未知前缀返回 404、
+          # 对 /app/zcode 前缀的请求尝试转发（后端不在 → 502，属预期）。
+          set -e
+          tar -xzf "$(ls packaging/fnOS/dist/zcode-*.fpk)" app.tgz
+          tar -xzf app.tgz gateway/
+          node gateway/gateway.mjs --socket /tmp/zcode-smoke.sock \
+            --prefix /app/zcode --port 1 --token smoke --log /tmp/zcode-smoke.log &
+          GW=$!
+          for i in $(seq 1 15); do [ -S /tmp/zcode-smoke.sock ] && break; sleep 1; done
+          [ -S /tmp/zcode-smoke.sock ] || { echo "✗ 网关未能监听"; cat /tmp/zcode-smoke.log; exit 1; }
+          echo "✓ 网关已监听"
+          code=$(curl -s -o /dev/null -w '%{http_code}' --unix-socket /tmp/zcode-smoke.sock http://localhost/other || true)
+          [ "$code" = "404" ] || { echo "✗ 前缀外请求应 404，实际 $code"; exit 1; }
+          echo "✓ 前缀外请求 404"
+          code=$(curl -s -o /dev/null -w '%{http_code}' --unix-socket /tmp/zcode-smoke.sock http://localhost/app/zcode/ || true)
+          [ "$code" = "502" ] || { echo "✗ 后端不在时应 502，实际 $code"; exit 1; }
+          echo "✓ 前缀内请求已转发（后端未启动 → 502，符合预期）"
+          kill "$GW" 2>/dev/null || true
 
       - uses: actions/upload-artifact@v4
         with:
-          name: zcode-${{ needs.runtime.outputs.version }}-fpk
+          name: zcode-fpk-${{ needs.runtime.outputs.version }}
           path: packaging/fnOS/dist/zcode-*.fpk
           retention-days: 30
           if-no-files-found: error

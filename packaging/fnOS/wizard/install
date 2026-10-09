@@ -4,7 +4,7 @@
     "items": [
       {
         "type": "tips",
-        "helpText": "ZCode 把一个能执行命令的 AI agent 和终端开在 8988 端口上，访问令牌用于防止局域网内其他设备直接使用。请随便填一串字符（越随机越好，例如 16 位以上字母数字）；桌面图标会自动携带该令牌，平时无需手输。字段名 wizard_path 对应 fnOS 的入口 URL 占位符 ${wizard_path}，这是入口自动带令牌的机制。"
+        "helpText": "ZCode 把一个能执行命令的 AI agent 和终端开在 NAS 上，访问令牌用于防止局域网内其他设备直接连 8988 端口使用。请随便填一串字符（越随机越好，例如 16 位以上字母数字）。桌面图标走飞牛统一网关（/app/zcode），已由面板登录态校验，不需要令牌；令牌只对局域网直连 http://<NAS_IP>:8988 生效。字段名 wizard_path 对应 fnOS 的入口 URL 占位符 ${wizard_path}。"
       },
       {
         "type": "text",

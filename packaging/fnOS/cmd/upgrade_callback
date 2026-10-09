@@ -1,6 +1,6 @@
 #!/bin/bash
-# 升级后：补齐 runtime 可执行位，并把当前令牌落盘（入口 URL 由 fnOS
-# 依据 wizard_path 向导值自动生成，无需改文件）。用户数据保留在 TRIM_PKGVAR。
+# 升级后：补齐 runtime 可执行位、刷新网关接入层与访问令牌。
+# 用户数据保留在 TRIM_PKGVAR（登录态、配置、工作区都不受影响）。
 set -e
 
 APP="zcode"
@@ -16,6 +16,14 @@ RUNNER="${TRIM_APPDEST}/runtime/bin/zcode.mjs"
 [ -f "${RUNNER}" ] && chmod +x "${RUNNER}" 2>/dev/null || true
 find "${TRIM_APPDEST}/runtime" -name '*.node' -exec chmod +x {} \; 2>/dev/null || true
 [ -d "${TRIM_APPDEST}/runtime/agent" ] && chmod +x "${TRIM_APPDEST}/runtime/agent/"*.cjs 2>/dev/null || true
+
+### 网关接入层权限（新版新增目录；旧版升级上来时也走这里补）。
+if [ -d "${TRIM_APPDEST}/gateway" ]; then
+    chmod 755 "${TRIM_APPDEST}/gateway" 2>/dev/null || true
+    chmod 644 "${TRIM_APPDEST}/gateway/gateway.mjs" "${TRIM_APPDEST}/gateway/url-compat.js" 2>/dev/null || true
+fi
+### 清掉旧进程遗留的 socket：否则新版本启动时监听会因路径已存在而失败。
+rm -f "${TRIM_APPDEST}/zcode.sock" 2>/dev/null || true
 
 TOKEN_FILE="${TRIM_PKGVAR}/etc/token"
 mkdir -p "${TRIM_PKGVAR}/etc"

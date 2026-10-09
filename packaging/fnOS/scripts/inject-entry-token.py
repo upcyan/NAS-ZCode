@@ -1,46 +1,79 @@
 #!/usr/bin/env python3
-"""给打包进 fpk 的 web/index.html 注入入口令牌脚本。
+"""给打包进 fpk 的 web/index.html 注入「入口令牌」脚本。
 
-为什么需要：fnOS 面板入口 URL 会用向导值替换 ${wizard_path}，但它把该值当
-**路径**处理（实测查询串会被丢掉），所以不能写 `/?token=${wizard_path}`。
-改成 `/${wizard_path}`：入口路径本身就是令牌，页面加载后由本脚本把路径首段
-写进 `zcode_lite_token` cookie。
+## 现在有两条访问链路
 
-服务端（entry-http.js）对 /ws、/ws/*、/api/* 的鉴权同时接受 cookie 与
-`?token=`，且是**从请求里取值比对**，因此：
+1. **网关入口（默认，桌面图标）**：`/app/zcode`
+   飞牛统一网关把该前缀交给包内的 `gateway/gateway.mjs`（unix socket），
+   由它剥前缀转发给本机 server，并**在转发请求里补上访问令牌**。
+   因此这条链路下页面不需要、也不应该自己去种令牌 cookie。
 
-  面板 iframe → GET /<token>  → 注入脚本写 cookie
-             → fetch /api/server-info  ✓
-             → ws://host:8988/ws       ✓（浏览器自动带 cookie）
+2. **局域网直连（可选）**：`http://<NAS_IP>:8988`
+   此时没有网关帮忙补令牌，需要把令牌交给页面：
+     - `/?token=<令牌>`（推荐，令牌只出现在查询串）
+     - `/<令牌>`（历史写法，向后兼容）
+   页面加载后由本脚本把令牌写进 `zcode_lite_token` cookie，
+   之后的 `fetch /api/*` 与 `ws /ws` 握手自动携带。
 
-⚠️ 必须**覆盖**已存在的旧 cookie，不能"有就跳过"：
-重装/换令牌后，浏览器里往往还留着上一版的 `zcode_lite_token`，跳过写入会让
-页面带着旧令牌握手 → /ws 401 → 前端显示「Web 启动失败 / WebSocket connection
-failed」。真机踩过这个坑（旧令牌残留在 cookie 里）。
+## 为什么必须排除一批首段
 
-只把**单段路径**当成令牌，避免误伤应用自身的路由
-（如 /share/callback、/cn/share/callback 这些 OAuth 回跳路径），
-否则登录流程会被写坏。
+入口路径不再是"纯令牌"了：`/app/zcode` 的首段是 `app`，若照旧当成令牌写进
+cookie，服务端就会拿 `app` 去比对，导致鉴权失败（且比不带 cookie 更难排查）。
+所以下面维护一份**保留首段**清单：命中就完全不写 cookie。
+
+## 为什么必须覆盖旧 cookie
+
+重装或换令牌后，浏览器里往往还留着上一版的 `zcode_lite_token`，跳过写入会让
+页面带着旧令牌握手 → `/ws` 401 → 前端显示「Web 启动失败 / WebSocket connection
+failed」。真机踩过这个坑，因此**一律覆盖**，不做"有就跳过"。
+
+只把**单段路径**当成令牌，避免误伤应用自身的多段路由
+（如 `/share/callback`、`/cn/share/callback` 这些 OAuth 回跳路径）。
 """
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
 MARKER = "zcode-fnos-entry-token"
 
+# 首段命中这些就绝不当作令牌：
+#   app / _fnos / __fnos —— 飞牛面板与网关自身命名空间
+#   assets / material-icons / pdfjs / favicon.ico —— 前端静态资源
+#   api / ws —— 服务端接口
+#   share / cn —— 分享与 OAuth 回跳路由
+RESERVED = [
+    "app",
+    "_fnos",
+    "__fnos",
+    "assets",
+    "material-icons",
+    "pdfjs",
+    "favicon.ico",
+    "api",
+    "ws",
+    "share",
+    "cn",
+    "index.html",
+]
+
 SNIPPET = (
     "<script>"
-    "/* " + MARKER + ": 用入口路径里的令牌刷新鉴权 cookie（含覆盖旧令牌）*/"
+    "/* " + MARKER + ": 从 ?token= 或单段入口路径取令牌，刷新鉴权 cookie（含覆盖旧令牌）*/"
     "(function(){try{"
+    "var RESERVED=" + json.dumps(RESERVED) + ";"
+    # ① 优先查询串：/?token=xxx
+    "var q=new URLSearchParams(location.search).get('token');"
+    # ② 回退单段路径：/<token>（且首段不在保留清单里）
     "var p=location.pathname.replace(/^\\/+|\\/+$/g,'');"
-    "if(!p||p.indexOf('/')!==-1)return;"          # 仅单段路径才是令牌
-    "if(p==='share'||p==='cn'||p==='index.html')return;"
+    "var t=q||((p&&p.indexOf('/')===-1&&RESERVED.indexOf(p)===-1)?p:null);"
+    "if(!t)return;"
     "var m=document.cookie.match(/(?:^|;\\s*)zcode_lite_token=([^;]*)/);"
     "var cur=m?decodeURIComponent(m[1]):null;"
-    "if(cur===p)return;"
-    "document.cookie='zcode_lite_token='+encodeURIComponent(p)+'; path=/; SameSite=Lax';"
+    "if(cur===t)return;"
+    "document.cookie='zcode_lite_token='+encodeURIComponent(t)+'; path=/; SameSite=Lax';"
     "}catch(e){}})();"
     "</script>"
 )
@@ -58,7 +91,7 @@ def main() -> int:
 
     html = path.read_text(encoding="utf-8")
     if MARKER in html:
-        # 已有旧版注入（可能有"跳过写入"的缺陷）：整体替换为最新片段
+        # 已有旧版注入（可能有"跳过写入"或"不识别保留首段"的缺陷）：整体替换为最新片段
         start = html.find("<script>/* " + MARKER)
         end = html.find("</script>", start)
         if start != -1 and end != -1:

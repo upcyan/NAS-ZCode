@@ -4,9 +4,10 @@
             "title": "ZCode",
             "icon": "images/icon_{0}.png",
             "type": "iframe",
-            "protocol": "http",
-            "port": "8988",
-            "url": "/${wizard_path}",
+            "protocol": "",
+            "gatewaySocket": "zcode.sock",
+            "gatewayPrefix": "/app/zcode",
+            "url": "/app/zcode",
             "allUsers": true
         }
     }

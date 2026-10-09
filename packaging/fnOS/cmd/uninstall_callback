@@ -1,7 +1,14 @@
 #!/bin/bash
-# 卸载后兜底：确保没有残留进程占端口（应用目录可能已被移除，走固定标记路径）。
+# 卸载后兜底：确保没有残留进程（应用服务 + 网关接入层）与遗留 socket。
+# 应用目录此时可能已被移除，所以按固定标记路径匹配，不依赖 TRIM_APPDEST。
 APP="zcode"
 for pid in $(pgrep -f "/@appcenter/${APP}/" 2>/dev/null; pgrep -f "/var/apps/${APP}/" 2>/dev/null); do
     kill -KILL "${pid}" 2>/dev/null || true
+done
+
+# 网关 socket 随应用目录一起被删，但目录若残留则手动清掉，避免下次安装监听失败。
+rm -f "/var/apps/${APP}/target/zcode.sock" "/var/apps/${APP}/zcode.sock" 2>/dev/null || true
+for d in /vol*/@appcenter/${APP}; do
+    [ -d "${d}" ] && rm -f "${d}/zcode.sock" 2>/dev/null || true
 done
 exit 0

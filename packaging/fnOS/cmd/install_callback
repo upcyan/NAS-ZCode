@@ -23,12 +23,21 @@ chmod +x "${RUNNER}" 2>/dev/null || true
 find "${TRIM_APPDEST}/runtime" -name '*.node' -exec chmod +x {} \; 2>/dev/null || true
 [ -d "${TRIM_APPDEST}/runtime/agent" ] && chmod +x "${TRIM_APPDEST}/runtime/agent/"*.cjs 2>/dev/null || true
 
+### 网关接入层：飞牛统一网关把 /app/zcode 交给这个进程（unix socket，建在应用
+### 目录下）。它由 cmd/main 以应用运行用户拉起，这里只需保证文件可读、目录可写。
+if [ -d "${TRIM_APPDEST}/gateway" ]; then
+    chmod 755 "${TRIM_APPDEST}/gateway" 2>/dev/null || true
+    chmod 644 "${TRIM_APPDEST}/gateway/gateway.mjs" "${TRIM_APPDEST}/gateway/url-compat.js" 2>/dev/null || true
+fi
+### 清掉上次安装/升级遗留的 socket 文件，否则监听会因路径已存在而失败。
+rm -f "${TRIM_APPDEST}/zcode.sock" 2>/dev/null || true
+
 mkdir -p "${TRIM_PKGVAR}/data" "${TRIM_PKGVAR}/etc" "${TRIM_PKGVAR}/log" "${TRIM_PKGVAR}/workspace"
 
-### 访问令牌：向导字段 wizard_path（标签「访问令牌」）是唯一事实来源。
-### fnOS 用它替换 ui/config 里 url 的 ${wizard_path} 占位符，面板入口自动带上
-### /?token=…；这里把同一值落盘到 ${TRIM_PKGVAR}/etc/token，供 cmd/main 启动
-### 时作为 --token 传给服务端。向导值缺失时沿用旧文件 / 生成随机值兜底。
+### 访问令牌：向导字段 wizard_path（标签「访问令牌」）是唯一事实来源，落盘到
+### ${TRIM_PKGVAR}/etc/token，供 cmd/main 作为 --token 传给服务端，并由网关
+### 接入层在转发时带上。桌面入口走网关（免令牌），令牌用于局域网直连。
+### 向导值缺失时沿用旧文件 / 生成随机值兜底。
 TOKEN_FILE="${TRIM_PKGVAR}/etc/token"
 if [ -n "${wizard_path:-${wizard_token:-}}" ]; then
     TOKEN="${wizard_path:-${wizard_token}}"

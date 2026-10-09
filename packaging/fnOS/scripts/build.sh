@@ -112,9 +112,21 @@ for f in bin/zcode.mjs server/entry-http.js agent/zcode.cjs web/index.html packa
 done
 echo "[build] runtime 完整性 ✓ ($(du -sh "${APP_DIR}/runtime" | cut -f1))"
 
-### 入口令牌：面板入口是 /<token>（fnOS 把向导值当路径替换，查询串会被丢掉），
-### 页面加载后需把路径首段写进 zcode_lite_token cookie，否则 /ws 握手 401。
+### 入口令牌：两条访问链路共用同一份 index.html。
+###   网关入口 /app/zcode —— 由网关接入层转发时补令牌，页面无需自己种 cookie；
+###   局域网直连 :8988 —— 需要 /?token=<令牌>（或历史写法 /<令牌>）让页面种 cookie。
+### 脚本会排除 app / assets / share 等保留首段，避免把网关路径首段误当令牌。
 python3 "${HERE}/inject-entry-token.py" "$(winpath "${APP_DIR}/runtime/web/index.html")"
+
+# ── 1.5 网关接入层（非局域网访问）────────────────────────────
+# 前端把同源资源与接口写成根绝对路径，而 server 不支持 basePath；飞牛统一网关
+# （ui/config 的 gatewaySocket + gatewayPrefix）把 /app/zcode 交给这个进程，
+# 由它剥前缀、按文本改写根绝对路径、转发 /ws。
+echo "[build] 安装网关接入层 → app/gateway"
+rm -rf "${APP_DIR}/gateway"
+mkdir -p "${APP_DIR}/gateway"
+cp "${PKG_DIR}/gateway/gateway.mjs"   "${APP_DIR}/gateway/gateway.mjs"
+cp "${PKG_DIR}/gateway/url-compat.js" "${APP_DIR}/gateway/url-compat.js"
 
 # ── 2. 桌面入口（ui 必须在 app/ 内）──────────────────────────
 mkdir -p "${APP_DIR}/ui/images"
@@ -131,6 +143,38 @@ cp "${PKG_DIR}/ui-images/icon_256.png" "${STAGE}/ICON_256.PNG"
 # ui/ 下不得残留 fnpack 模板占位符（否则桌面图标点了没反应）
 if grep -rn -e '{port}' -e '{display_name}' "${APP_DIR}/ui" > /dev/null 2>&1; then
     echo "✗ ui/ 里仍有 {port} / {display_name} 占位符 → 桌面图标会点了没反应"
+    exit 1
+fi
+# 网关接入层必须齐备，否则非局域网（fnConnect）访问会整条链路不可用。
+for f in gateway/gateway.mjs gateway/url-compat.js; do
+    if [ ! -f "${APP_DIR}/${f}" ]; then
+        echo "✗ 缺少网关接入层文件: ${f}"
+        exit 1
+    fi
+done
+# 网关 socket 名与 ui/config 的 gatewaySocket 必须一致：对不上就永远连不通。
+GW_SOCK="$(grep -oE '"gatewaySocket"[[:space:]]*:[[:space:]]*"[^"]+"' "${APP_DIR}/ui/config" | sed 's/.*"\([^"]*\)"$/\1/')"
+GW_PREFIX="$(grep -oE '"gatewayPrefix"[[:space:]]*:[[:space:]]*"[^"]+"' "${APP_DIR}/ui/config" | sed 's/.*"\([^"]*\)"$/\1/')"
+if [ "${GW_SOCK}" != "zcode.sock" ]; then
+    echo "✗ ui/config 的 gatewaySocket 应为 zcode.sock，实际为 '${GW_SOCK}'"
+    exit 1
+fi
+if [ "${GW_PREFIX}" != "/app/zcode" ]; then
+    echo "✗ ui/config 的 gatewayPrefix 应为 /app/zcode，实际为 '${GW_PREFIX}'"
+    exit 1
+fi
+# cmd/main 里的前缀必须与 ui/config 一致（两处各自硬编码，改一处忘另一处会静默 404）。
+if ! grep -q 'GATEWAY_PREFIX="/app/zcode"' "${PKG_DIR}/cmd/main"; then
+    echo "✗ cmd/main 的 GATEWAY_PREFIX 与 ui/config 的 gatewayPrefix 不一致"
+    exit 1
+fi
+# 入口令牌脚本必须已注入，且必须认识保留首段（否则网关路径首段会被当令牌）。
+if ! grep -q "zcode-fnos-entry-token" "${APP_DIR}/runtime/web/index.html"; then
+    echo "✗ web/index.html 未注入入口令牌脚本"
+    exit 1
+fi
+if ! grep -q 'RESERVED' "${APP_DIR}/runtime/web/index.html"; then
+    echo "✗ 入口令牌脚本未排除保留首段（网关路径会被误当令牌）"
     exit 1
 fi
 # 双架构预编译件必须都在（platform=all 的底气）
