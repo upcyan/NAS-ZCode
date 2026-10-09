@@ -22,8 +22,12 @@
 #   bash packaging/fnOS/scripts/build.sh --runtime <tar.gz>    # 指定官方运行时包
 #   ZCODE_VERSION=3.14.1 bash packaging/fnOS/scripts/build.sh  # 覆盖版本号
 #
-# ⚠ fnpack 打 app.tgz 时会把权限拍平成 0666/0777（官方模板同款行为），
-#   可执行位由 cmd/install_callback 在装机时补回。
+# ⚠ 产物权限：fnpack **不会**把权限拍平，它原样保留 staging 里文件的权限位。
+#   因此构建必须在宽松的 umask 下进行：若在 umask 0077 的 shell 里构建，
+#   staging 里的 app.tgz / 目录会变成 0600 / 0700，装到飞牛上后**应用运行用户
+#   （非属主）读不到**，安装/升级会以「执行脚本出错且原因不明」失败（错误码 10271）。
+#   真机踩过这个坑：同样的源码，只在 umask 0022 下构建才能装。
+umask 022
 
 set -euo pipefail
 
@@ -227,6 +231,25 @@ cp -r "${PKG_DIR}/config" "${STAGE}/config"
 cp -r "${PKG_DIR}/wizard" "${STAGE}/wizard"
 chmod 755 "${STAGE}/cmd/"*
 
+# ── 4.5 权限归一化 ───────────────────────────────────────────
+# 打包前把所有内容的权限**显式**设成规范值，不依赖构建者的 umask。
+# 为什么关键：fnpack 不拍平权限，它原样保留；若 staging 里是 0600/0700，
+# 装到飞牛后应用运行用户（非属主）读不到，安装/升级会以「执行脚本出错且
+# 原因不明」（10271）失败。这里统一成：
+#   目录 0755、普通文件 0644；脚本/可执行位（cmd/*、*.node、*.cjs、node 二进制）
+#   保持/补上可执行位 —— 与官方包 0666/0777 的语义一致（全员可读，属主可写）。
+find "${STAGE}" -type d -exec chmod 755 {} + 2>/dev/null || true
+find "${STAGE}" -type f -exec chmod 644 {} + 2>/dev/null || true
+chmod 755 "${STAGE}/cmd/"* 2>/dev/null || true
+find "${STAGE}/app/runtime" -name '*.node' -exec chmod 755 {} + 2>/dev/null || true
+if [ -d "${STAGE}/app/runtime/agent" ]; then
+    chmod 755 "${STAGE}/app/runtime/agent/"*.cjs 2>/dev/null || true
+fi
+chmod 755 "${STAGE}/app/runtime/bin/zcode.mjs" 2>/dev/null || true
+# 预编译的 node-pty / koffi 等自带可执行位，别被上面的 644 抹掉
+find "${STAGE}/app/runtime" -type f -name '*.node' -exec chmod 755 {} + 2>/dev/null || true
+find "${STAGE}/app/runtime" -type f -perm -u+x -exec chmod 755 {} + 2>/dev/null || true
+
 # ── 5. 打包 ──────────────────────────────────────────────────
 FINAL="${DIST}/zcode-${VERSION}${VARIANT}.fpk"
 rm -f "${FINAL}"
@@ -241,13 +264,15 @@ if [ -n "${FNPACK}" ]; then
 else
     # CI 等价打包：fpk = tar.gz，内部 app.tgz（app/ 目录）+ 包根其余文件。
     # 布局与 fnpack build 产物一致（demoapp / 线上包同款），fnpack 仅省去调用。
+    # ⚠ 包根文件清单必须与 fnpack 的产物一致（含 wizard/）——漏一个应用中心就读不到，
+    #   例如漏 wizard 会让安装向导拿不到 wizard_path，入口 URL 替换不出令牌。
     echo "[build] fnpack 不可用，手动打包 → ${FINAL}"
     APP_TGZ="${DIST}/.app.tgz"
     ( cd "${APP_DIR}" && tar -czf "${APP_TGZ}" . )
     cp "${APP_TGZ}" "${STAGE}/app.tgz"
     rm -f "${APP_TGZ}"
     ( cd "${STAGE}" && tar -czf "${FINAL}" manifest ICON.PNG ICON_256.PNG \
-        app.tgz cmd config )
+        app.tgz cmd config wizard )
     rm -f "${STAGE}/app.tgz"
 fi
 if [ ! -f "${FINAL}" ]; then
@@ -256,5 +281,20 @@ if [ ! -f "${FINAL}" ]; then
     exit 1
 fi
 
+# ── 6. 产物权限自检 ──────────────────────────────────────────
+# 这里必须拦住 0600/0700 一类"其他用户不可读"的权限：装到飞牛上后，
+# 应用中心以应用用户解包，读不到 app.tgz 就会报「执行脚本出错且原因不明」。
+# 与其等到真机升级失败，不如在构建期就失败。
+PERM_BAD="$(tar -tvzf "${FINAL}" | awk '$1 !~ /^(d|-)rwxr|^(d|-)rw-/ {print $1" "$6}' | head -5)"
+if [ -n "${PERM_BAD}" ]; then
+    echo "✗ 产物里存在其他用户不可读的权限（装到飞牛会失败）："
+    echo "${PERM_BAD}" | sed 's/^/    /'
+    echo "  常见原因：构建时 umask 过严（当前 umask=$(umask)）。"
+    exit 1
+fi
+echo "[build] 产物权限自检 ✓"
+
 echo "[build] ✓ ${FINAL}"
 ls -la "${FINAL}"
+# 打印包根权限，便于人工复核（应与官方包同为全员可读）
+tar -tvzf "${FINAL}" | head -20
