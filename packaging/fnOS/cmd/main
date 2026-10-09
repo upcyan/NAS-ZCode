@@ -47,6 +47,14 @@ fi
 APP_DIR="${TRIM_APPDEST}"
 DATA_DIR="${TRIM_PKGVAR}/data"
 
+### 旧版声明过 data-share，工作区默认落在共享目录 /vol1/@appshare/zcode/workspace。
+### 现在不再声明 data-share（见 resolve_workspace 的说明），但这个路径对升级上来的
+### 用户仍然有效：只要它还在且可写就继续用，用户的数据与习惯都不变。
+### 路径里的卷号不写死：从 TRIM_PKGVAR（如 /vol1/@appdata/zcode）推出卷根。
+### cut -f1-2 得到 /vol1；用 -f1-3 会得到 /vol1/@appdata，那是错的。
+APP_VOL="$(printf '%s' "${TRIM_PKGVAR}" | cut -d/ -f1-2)"      # /vol1
+LEGACY_WORKSPACE="${APP_VOL}/@appshare/${APP}/workspace"
+
 ### 进程识别：一律用绝对路径匹配，绝不误伤 NAS 上其他 node 进程。
 RUNTIME_PATTERN="${APP_DIR}/runtime"
 GATEWAY_PATTERN="${APP_DIR}/${GATEWAY_ENTRY}"
@@ -119,19 +127,37 @@ ensure_token() {
     chmod 600 "${f}" 2>/dev/null || true
 }
 
-### 工作区：优先 TRIM_DATA_SHARE_PATHS 里名为 zcode/workspace 的共享目录，
-### 否则第一个共享路径，最终兜底 PKGVAR/workspace。
+### 工作区解析。
+###
+### 为什么不声明 data-share（config/resource）：飞牛在**升级**时会执行
+### "data-share 依赖资源注册"，本应用在这一步稳定失败（错误码 10271
+### ErrCodeResourceExecResouceExceptionUnknown / 前端「执行脚本出错且原因未知」），
+### 且从发起到失败仅 2 秒、期间不触碰任何应用文件 —— 即在注册共享目录时就挂了。
+### 去掉 data-share 声明即可绕开这一步。
+###
+### 代价与补偿：没有 data-share 后，工作区不能落在 /vol1/@appshare（那是共享目录视图）。
+### 改为按下面顺序挑一个**持久且应用用户可写**的目录：
+###   1. 旧的共享目录若已存在且可写 —— 升级上来的用户继续用原工作区，数据不搬家；
+###   2. TRIM_DATA_SHARE_PATHS 里第一个可用路径（用户若在设置里授权了目录，走这里）；
+###   3. 兜底 PKGVAR/workspace（应用数据目录，升级保留，但不显示在文件管理器里）。
 resolve_workspace() {
-    local p
+    local p legacy="${LEGACY_WORKSPACE}"
+
+    ### 1) 旧工作区还在就用它：升级不改变用户已有的工作区位置。
+    if [ -n "${legacy}" ] && [ -d "${legacy}" ] && [ -w "${legacy}" ]; then
+        printf '%s' "${legacy}"
+        return 0
+    fi
+
+    ### 2) 用户授权目录（设置 → 访问权限 里加过的话，fnOS 会通过这个变量下发）。
     if [ -n "${TRIM_DATA_SHARE_PATHS}" ]; then
         local IFS=':'
         for p in ${TRIM_DATA_SHARE_PATHS}; do
-            case "${p}" in */zcode/workspace) printf '%s' "${p}"; return 0 ;; esac
-        done
-        for p in ${TRIM_DATA_SHARE_PATHS}; do
-            [ -n "${p}" ] && { printf '%s' "${p}"; return 0; }
+            [ -n "${p}" ] && [ -d "${p}" ] && [ -w "${p}" ] && { printf '%s' "${p}"; return 0; }
         done
     fi
+
+    ### 3) 兜底：应用数据目录下的 workspace（升级/重装保留）。
     printf '%s' "${TRIM_PKGVAR}/workspace"
 }
 

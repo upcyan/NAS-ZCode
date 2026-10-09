@@ -39,10 +39,22 @@ fi
 ### 匹配串刻意用 "/runtime" 与 "/gateway/gateway.mjs"：
 ### 本脚本自己的 cmdline 是 "<APP_DIR>/cmd/upgrade_init"，不含这两个串，
 ### 所以 pgrep 不会匹配到自己（否则会把自己 KILL 掉、让升级流程中断）。
-PROC_PATTERNS=("${TRIM_APPDEST}/runtime" "${TRIM_APPDEST}/${GATEWAY_ENTRY}")
+###
+### 安全前提：TRIM_APPDEST 必须是**绝对且非空**的真实路径。若它为空，
+### 模式会退化成 "/runtime"，pgrep -f 会匹配到同机其他应用的进程
+### （trim.hermes 的 python、dsh-fnos 的 node 等），下面的 pkill -KILL
+### 就会误杀无关应用。所以这里先解析出确定的路径，拿不到就只做温和停服、不做兜底清理。
+APPDEST_RESOLVED="${TRIM_APPDEST:-}"
+[ -n "${APPDEST_RESOLVED}" ] || APPDEST_RESOLVED="$(readlink -f "/var/apps/${APP}" 2>/dev/null || true)"
+
+PROC_PATTERNS=()
+if [ -n "${APPDEST_RESOLVED}" ] && [ "${APPDEST_RESOLVED#/}" != "${APPDEST_RESOLVED}" ]; then
+    PROC_PATTERNS=("${APPDEST_RESOLVED}/runtime" "${APPDEST_RESOLVED}/${GATEWAY_ENTRY}")
+fi
 
 still_alive() {
     local p
+    [ "${#PROC_PATTERNS[@]}" -gt 0 ] || return 1
     for p in "${PROC_PATTERNS[@]}"; do
         pgrep -f -- "${p}" > /dev/null 2>&1 && return 0
     done
@@ -65,6 +77,8 @@ if still_alive; then
 fi
 
 ### 清掉旧 socket：新版本启动时会重新监听，残留文件会导致监听失败。
-rm -f "${TRIM_APPDEST}/zcode.sock" 2>/dev/null || true
+if [ -n "${APPDEST_RESOLVED}" ]; then
+    rm -f "${APPDEST_RESOLVED}/zcode.sock" 2>/dev/null || true
+fi
 
 exit 0
