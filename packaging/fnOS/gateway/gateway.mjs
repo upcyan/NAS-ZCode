@@ -185,6 +185,59 @@ function isImmutableAsset(target) {
 }
 
 // ── HTTP 代理 ───────────────────────────────────────────────────────────────
+// 入口 HTML 缓存：版本错配自愈时要用最新的入口页。缓存 10 秒，既避免每次
+// 自愈都回源，又保证升级后很快拿到新清单（入口页本身在上游就是 no-store）。
+const ENTRY_TTL_MS = 10_000;
+let entryCache = { at: 0, body: null };
+
+function fetchEntryHtml() {
+  if (entryCache.body && Date.now() - entryCache.at < ENTRY_TTL_MS) {
+    return Promise.resolve(entryCache.body);
+  }
+  return new Promise((resolve) => {
+    const headers = { host: `${TARGET_HOST}:${TARGET_PORT}`, "accept-encoding": "identity" };
+    if (LOCAL_TOKEN) headers.cookie = withLocalToken("");
+    const req = http.request(
+      { host: TARGET_HOST, port: TARGET_PORT, method: "GET", path: "/", headers },
+      (up) => {
+        if (up.statusCode !== 200) { up.resume(); resolve(null); return; }
+        const chunks = [];
+        up.on("data", (c) => chunks.push(c));
+        up.on("end", () => {
+          let body = rewriteRootAbsolute(Buffer.concat(chunks).toString("utf8"));
+          body = injectCompatLayer(body);
+          entryCache = { at: Date.now(), body };
+          resolve(body);
+        });
+      },
+    );
+    req.on("error", () => resolve(null));
+    req.end();
+  });
+}
+
+/** 用最新入口 HTML 回应「旧 hash 资源 404」，让客户端自愈到当前版本 */
+function serveEntryHtml(res, req) {
+  fetchEntryHtml().then((body) => {
+    if (!body) {
+      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("Not Found");
+      return;
+    }
+    const buf = Buffer.from(body, "utf8");
+    log(`版本错配自愈：${req.url} → 返回最新入口 HTML`);
+    res.writeHead(200, {
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": String(buf.length),
+      "Cache-Control": "no-store",
+    });
+    res.end(buf);
+  }).catch(() => {
+    if (!res.headersSent) res.writeHead(500, { "Content-Type": "text/plain; charset=utf-8" });
+    res.end("entry html unavailable");
+  });
+}
+
 const server = http.createServer((req, res) => {
   const target = stripPrefix(req.url);
   if (target === null) {
@@ -203,6 +256,27 @@ const server = http.createServer((req, res) => {
     { host: TARGET_HOST, port: TARGET_PORT, method: req.method, path: target, headers },
     (up) => {
       const kind = textKind(up.headers["content-type"]);
+
+      // ── 版本错配自愈 ──────────────────────────────────────────────────────
+      // 场景：客户端（尤其飞牛手机 App 的 WebView 会保活复用页面）缓存了**上一版**
+      // 的入口 HTML，里面引用的是旧 hash 的资源（如 assets/index-OLD.js）。服务升级后
+      // 旧文件已不存在 —— 表现就是「样式全丢、UI 元素裸露堆叠，二次刷新才正常」。
+      //
+      // 上游（entry-http）对不存在的路径一律做 SPA 回退：返回 200 + 入口 HTML，
+      // 所以这里不能只看状态码，必须看**内容类型**：客户端明确在要一个静态资源
+      // （内容寻址的 js/css/字体…），上游却回了 HTML，那就是版本错配。
+      //
+      // 处理：改写成一份**最新入口 HTML**（强制 no-store），让客户端重新拿到当前
+      // 资源清单后自愈。绝不能给这种响应发 immutable 长缓存 —— 那会把「HTML 冒充 JS」
+      // 缓存一年，二次刷新也不会好。
+      //
+      // 只对内容寻址的资源路径生效；/api、/ws、页面路由等保持原状。
+      if (kind === "html" && isImmutableAsset(target)) {
+        up.resume(); // 丢弃上游的 HTML 体（等价于入口缓存的内容），避免连接悬挂
+        serveEntryHtml(res, req);
+        return;
+      }
+
       // HTML / CSS / JS 需要按文本改写，必须缓冲；其余（图片、字体、wasm、
       // 以及 HTML 之外的流式响应）直接直通，避免把大文件读进内存。
       // 注意 JS 里 28 处 `"/assets/…"` 与 CSS 里 59 处 `url(/assets/KaTeX_*)`
