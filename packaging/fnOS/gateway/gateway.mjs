@@ -167,6 +167,23 @@ function textKind(contentType) {
   return null;
 }
 
+/**
+ * 是否内容寻址（可长缓存）。
+ *
+ * Vite 产物形如 `index-DuJc5FYg.js`、`KaTeX_Main-Regular-abc123.woff2`：
+ * 文件名里的 hash 由内容算出，内容变了文件名就变，所以同名文件的内容永不改变，
+ * 缓存一年也不会拿到过期内容。网关对其改写（补前缀）是纯函数，结果同样稳定。
+ *
+ * 反例：`index.html`、`favicon.ico`、`/api/*` —— 名字固定，必须每次回源。
+ */
+const IMMUTABLE_RE = /-[A-Za-z0-9_-]{8,}\.(?:js|mjs|css|woff2?|ttf|otf|png|jpe?g|gif|svg|webp|wasm|map)$/i;
+function isImmutableAsset(target) {
+  const path = String(target || "").split("?")[0].split("#")[0];
+  // 只对根目录下的静态资源生效；/api 与 /ws 不在此列（它们也不走文本改写分支）。
+  if (!path.startsWith("/")) return false;
+  return IMMUTABLE_RE.test(path);
+}
+
 // ── HTTP 代理 ───────────────────────────────────────────────────────────────
 const server = http.createServer((req, res) => {
   const target = stripPrefix(req.url);
@@ -209,11 +226,21 @@ const server = http.createServer((req, res) => {
         const outHeaders = sanitizeHeaders(up.headers);
         delete outHeaders["content-encoding"]; // 已按文本改写过，长度与编码都以新的为准
         outHeaders["content-length"] = String(buf.length);
-        // 改写后的内容与上游 ETag/Cache-Control 不再对应（尤其 index.html 与
-        // 带 hash 的 chunk），统一禁止缓存，避免浏览器拿旧路径的副本长期不回源。
-        outHeaders["cache-control"] = "no-store";
         delete outHeaders["etag"];
         delete outHeaders["last-modified"];
+
+        // 缓存策略：这里改写的是「根绝对路径 → 前缀路径」，同源同文件每次改写结果
+        // 完全一致，所以只要 URL 是内容寻址的（Vite 产物带 hash），就可以放心长缓存。
+        //
+        // 曾经这里一律 no-store，代价很大：index-<hash>.js 有 5.9 MB，一次页面加载
+        // 内被重复请求 7 次、diffs.worker 4 次，一次会话光资源就传 15 MB。局域网下
+        // 感知不明显，非局域网（fnConnect 走公网）就非常慢。
+        if (isImmutableAsset(target)) {
+          outHeaders["cache-control"] = "public, max-age=31536000, immutable";
+        } else {
+          // HTML（入口页）与其它非内容寻址路径：必须每次回源，否则拿不到新的资源清单。
+          outHeaders["cache-control"] = "no-store";
+        }
         res.writeHead(up.statusCode || 200, outHeaders);
         res.end(buf);
       });
