@@ -1,4 +1,4 @@
-# ZCode · 飞牛 fnOS 原生版
+# NAS-Zcode-cyanmod · ZCode 飞牛 fnOS 原生版
 
 把 [Z.ai 开源的 AI 编程工作台 ZCode](https://github.com/zai-org/ZCode) 打包成飞牛 fnOS 的**原生第三方应用**（非 Docker）：
 
@@ -7,18 +7,18 @@
 - **非 Docker**：原生 Node.js 运行，复用应用中心的 **Node.js v22**（`install_dep_apps` 自动装）
 - **一个包同时支持 x86_64 与 arm64**（`platform = all`，原生模块用官方预编译件）
 - **局域网与远程都能用**：接入飞牛统一网关，fnConnect 等非局域网方式不必映射 8988 端口
-- 基于 ZCode 官方 Web 运行时（`zcode --web`），与桌面版共用同一套前端组件
 
-> 本仓库只做 NAS 侧的移植与打包，不修改 ZCode 本身。上游代码：[zai-org/ZCode](https://github.com/zai-org/ZCode)（Apache-2.0）。开发者：Z.ai；飞牛移植 / 打包 / 发布：[Kasbuky-sudo](https://github.com/Kasbuky-sudo)。
+> 本仓库只做 NAS 侧的移植与打包，不修改 ZCode 本身。上游代码：[zai-org/ZCode](https://github.com/zai-org/ZCode)（Apache-2.0）。
+> 开发者：Z.ai；飞牛移植 / 打包 / 发布：[upcyan](https://github.com/upcyan)。
 
 ## 安装
 
 1. 在飞牛应用中心先安装（或随本应用自动装上）**Node.js v22** 运行时；
-2. 从 [Releases](https://github.com/Kasbuky-sudo/NAS-ZCode/releases) 下载 `zcode-<版本>.fpk`；
+2. 从 [Releases](https://github.com/upcyan/NAS-Zcode-cyanmod/releases) 下载 `zcode-<版本>.fpk`；
 3. 应用中心 → 手动安装 → 选择 fpk 文件；
 4. 安装完成后从桌面图标打开（iframe 内嵌）。
 
-端口默认 **8988**（局域网直连用）。首个飞牛版本需要真机验收，请先在测试设备安装。
+端口默认 **8988**（局域网直连用）。
 
 ## 两种访问方式
 
@@ -29,7 +29,7 @@ ZCode Web 等于把一个能执行命令的 AI agent 和终端开放出去，所
 | 入口 | `https://<面板>/app/zcode`（飞牛统一网关） | `http://<NAS_IP>:8988` |
 | 鉴权 | **面板登录态**（网关校验，并注入 `X-Trim-Userid/Username/Isadmin`） | **访问令牌** |
 | 端口映射 | 不需要 | 需自行放通 8988 |
-| fnConnect 远程 | ✅ 可用 | ❌ 裸端口不可达 |
+| fnConnect 远程 | 可用 | 裸端口不可达 |
 
 ### 为什么需要一个网关接入层
 
@@ -65,13 +65,30 @@ ZCode 前端把同源资源与接口写成**根绝对路径**（`/assets/…`、
   与 `zcode_lite_token` cookie。打包时给 `web/index.html` 注入的一小段脚本负责种 cookie，
   并**排除** `app`/`assets`/`share` 等保留首段，避免把网关路径首段误当令牌。
 - 网关转发时会**覆盖**请求里的 `zcode_lite_token`（不是追加），因此浏览器残留的旧令牌
-  不会破坏远程访问——这正是旧版"重装后报 WebSocket 连接失败"的成因。
+  不会破坏远程访问。
 
 > **请勿把 8988 映射到公网**。远程访问请走面板 / fnConnect（网关已带登录态校验）。
 
 ## 工作区
 
-应用安装后会创建共享目录 `zcode/workspace` 作为默认工作区（文件管理器可见）。让 ZCode 操作已有目录（如某个共享文件夹）时，在「应用中心 → 已安装 → ZCode → 设置 → 访问权限」添加授权目录，然后重启应用。
+默认工作区是共享目录 `zcode/workspace`（文件管理器可见）。让 ZCode 操作已有目录（如某个共享文件夹）时，在「应用中心 → 已安装 → ZCode → 设置 → 访问权限」添加授权目录，然后重启应用。
+
+`cmd/main` 按以下顺序解析工作区，升级不会改变已有位置：
+
+1. 旧版共享目录 `/vol1/@appshare/zcode/workspace`（若存在且可写——升级用户继续用原路径）；
+2. `TRIM_DATA_SHARE_PATHS` 里第一个可用路径（上一步授权过的目录）；
+3. 兜底 `TRIM_PKGVAR/workspace`（应用数据目录，升级保留）。
+
+> 为什么不再声明 `data-share`：见下方「已知问题与踩过的坑」。
+
+## 版本号规则
+
+**`<上游 ZCode 版本>-<打包修订号>`**，例如 `3.14.3-4`。
+
+- 上游部分跟 ZCode 官方 runtime 一致，改打包只递增修订号；
+- 飞牛用 `golang.org/x/mod/semver` 比较版本，`-N` 形态的**修订递增**是有效的
+  （真机数据：`trim.media` 的 `0.9.7-2 → 0.9.7-3 → 0.9.7-4` 连续两次升级成功）；
+- 上游升版时修订号归 1。
 
 ## 与桌面版的差异
 
@@ -81,6 +98,50 @@ ZCode 前端把同源资源与接口写成**根绝对路径**（`/assets/…`、
 | 终端 | 本机 node-pty | 服务端 node-pty（浏览器内） |
 | 浏览器自动化 | 内置 | 不可用（NAS 无桌面 Chromium） |
 | 配置与凭据 | 本机用户目录 | NAS 应用数据目录（升级保留） |
+
+## 已知问题与踩过的坑
+
+排查过程记录在此，避免以后重新踩。
+
+### 升级失败「执行脚本出错且原因未知」（已修，v3.14.3-3）
+
+`cmd/uninstall_callback` 里的进程清理用 `pgrep -f "/var/apps/zcode/"`，而脚本自身路径就是
+`/var/apps/zcode/cmd/uninstall_callback` —— **匹配到自己**，随后 `kill -KILL` 自杀。
+飞牛升级流程会复用卸载脚本来清旧目录，所以升级必现、全新安装不触发。
+
+修复：排除自身与父进程 PID，并读 `/proc/<pid>/exe` 只杀解释器为 node 的进程。
+
+> 注意：升级时执行的是**已装旧版**里的脚本，修复包不会立即生效。若已装版本带此缺陷，
+> 需先手动替换 `/var/apps/zcode/cmd/uninstall_callback` 再升级。
+
+### 远程（fnConnect）打不开（已修）
+
+旧版桌面入口是裸端口 `http://<NAS_IP>:8988`，而 fnConnect 只转发面板的 `/app/` 网关，
+不转发业务端口。修复即上文的网关接入层。
+
+### 打包产物权限（已修）
+
+构建机 `umask` 为 `0077` 时，`fnpack` 原样保留权限位，打出的 `app.tgz` 是 `0600`，
+应用运行用户读不到。现在构建时统一为目录 `0755` / 文件 `0644`，并在打包后自检。
+
+### data-share 声明（已移除）
+
+升级路径上的 data-share 注册环节曾导致失败，现已改为不声明 `data-share`，
+工作区按上文三级回退解析。
+
+### 套餐查询显示「获取失败」
+
+上游接口行为（返回 3001），非本包问题，详见 `docs/已知问题-套餐查询-3001.md`。
+
+### 官方 CDN 已在发 3.14.5，暂不追
+
+源码未公开、组件包不可下载，详见 `docs/上游版本同步-3.14.5调研.md`。
+
+### 插件市场操作一直转圈
+
+服务端链路正常（CDN 下载、RPC、插件落盘均实测通过）。若 UI 卡在转圈无报错，
+先检查页面与服务端的 WebSocket 是否还活着 —— 服务重启后旧页面不会自动重连，
+**强制刷新（Ctrl+Shift+R）**即可。
 
 ## 构建
 
@@ -116,18 +177,13 @@ DIST_DIR=/path/to/out bash packaging/fnOS/scripts/build.sh
 
 也可以指定运行时包路径：`bash packaging/fnOS/scripts/build.sh --runtime /path/to/zcode-3.14.1.tar.gz`。
 
-验收变体：`DEP_APPS=none bash packaging/fnOS/scripts/build.sh ...` 会剥离 manifest 里的
-`install_dep_apps` 声明（产物名带 `-nodep` 后缀）。用途：Node 运行时已装好时，绕过
-App Center 对「声明依赖的本地 fpk」的拦截，便于 trim-cli 自动化安装验收——正式分发请用
-默认变体（带依赖声明，新装用户会自动装上 Node.js v22）。
-
 ## 目录结构
 
 ```
 packaging/fnOS/
 ├── manifest              # 应用元信息（platform=all、nodejs_v22 依赖、端口 8988）
 ├── cmd/                  # 生命周期脚本（main / install / upgrade / uninstall / config）
-├── config/               # privilege（run-as: package）与 resource（工作区共享目录）
+├── config/               # privilege（run-as: package）与 resource
 ├── gateway/              # 网关接入层：gateway.mjs（代理）+ url-compat.js（前端路径兼容）
 ├── ui/config             # 飞牛桌面入口（gatewaySocket → /app/zcode）
 ├── ui-images/            # 图标（取自 ZCode 官方桌面版资源）
@@ -135,24 +191,18 @@ packaging/fnOS/
 └── scripts/inject-entry-token.py  # 注入入口令牌脚本（局域网直连用）
 .github/workflows/build.yml  # 自动构建官方 runtime 并产出 fpk
 upstream.version             # 钉住的 ZCode 上游提交
-fnos.version                 # fpk 版本号（独立于上游版本）
+fnos.version                 # fpk 版本号（<上游>-<修订>）
 ```
-
-> 版本号注意：飞牛用 `golang.org/x/mod/semver` 比较版本，带 `-` 的后缀会被判为
-> **prerelease（更小）**。所以打补丁版请用 `3.14.4` 这类递增号，**不要**用 `3.14.3-1`
-> ——否则已装用户收不到升级。
 
 ## 版本与文档
 
-- `fnos.version` —— fpk 版本号（当前 `3.14.4`）。**注意**：飞牛用
-  `golang.org/x/mod/semver` 比较版本，带 `-` 的后缀会被判为 prerelease
-  （`3.14.3-1 < 3.14.3`），已装用户将收不到升级 —— 补丁版请用递增的补丁号。
+- `fnos.version` —— fpk 版本号（当前 `3.14.3-4`），格式 `<上游>-<修订>`。
 - `upstream.version` —— 钉住的上游 ZCode 提交（当前 `29628c9acd` = 上游 3.14.3）。
   改这一行并 push，CI 会自动重建 runtime 与 fpk。
-- `docs/发布说明-v3.14.4.md` —— 本版发布说明（可直接贴到 Release）。
-- `docs/论坛发帖-ZCode-v3.14.4.md` —— 面向用户的介绍帖。
+- `docs/发布说明.md` —— 最近一版面向用户的发布说明。
+- `docs/论坛发帖-ZCode.md` —— 面向用户的介绍帖。
 - `docs/上游版本同步-3.14.5调研.md` —— 为什么官方 CDN 的 3.14.5 暂时追不了。
-- `docs/已知问题-套餐查询-3001.md` —— 套餐查询失败的上游成因（非本包问题）。
+- `docs/已知问题-套餐查询-3001.md` —— 套餐查询失败的上游成因。
 
 ## 许可
 

@@ -1,4 +1,4 @@
-# 【原生应用】ZCode · NAS 版 v3.14.4 —— 把 AI 编程工作台放上 NAS，关掉浏览器它接着干，外网也能连
+# 【原生应用】ZCode · NAS 版 —— 把 AI 编程工作台放上 NAS，关掉浏览器它接着干，外网也能连
 
 > 关键词：原生 fpk、不用 Docker、x86 + arm64 通吃、服务端权威、内置终端、**fnConnect 远程可用**、飞牛统一网关
 
@@ -14,7 +14,7 @@
 
 > **法律声明（必读）**
 >
-> - 本包由社区个人打包（Kasbuky），**不是 Z.ai 官方发布，也不是飞牛官方应用**，与两家公司均无隶属或合作关系。
+> - 本包由社区个人打包（upcyan），**不是 Z.ai 官方发布，也不是飞牛官方应用**，与两家公司均无隶属或合作关系。
 > - 上游为开源项目 [zai-org/ZCode](https://github.com/zai-org/ZCode)（Apache-2.0，开发者 Z.ai）。本包**只做 NAS 侧打包与适配，未修改 ZCode 本身**；包内运行时由上游源码构建。
 > - 本包**不出售、不接受捐赠、不附带广告或任何形式的变相收费**。
 > - 使用需**自备 Z.ai 账号或模型 API Key**：模型调用的费用、额度与合规由使用者自行承担，本包不附带任何账号或额度。
@@ -45,7 +45,7 @@ Web 端和桌面版共用同一套前端组件：对话、任务编排、代码�
 
 ### 5. 外网也能连了：走飞牛统一网关，不用端口映射
 
-v3.14.4 起，桌面图标改走**飞牛统一网关**（入口 `/app/zcode`）：
+本版起，桌面图标改走**飞牛统一网关**（入口 `/app/zcode`）：
 
 - **手机 App / fnConnect / 外网**打开面板点图标，直接就能用——不再受"裸端口外网不可达"的限制；
 - 鉴权走**面板登录态**，不必把访问令牌塞进 URL，也不怕它留在浏览器历史里；
@@ -75,14 +75,15 @@ v3.14.4 起，桌面图标改走**飞牛统一网关**（入口 `/app/zcode`）�
 应用中心 → 外部源 → 添加：
 
 ```
-https://github.com/Kasbuky-sudo/FnDepot
+https://github.com/upcyan/NAS-Zcode-cyanmod
 ```
 
-以后有新版本会在应用中心里**直接提示更新**，不用再来翻帖子。这个源里还有其他应用（旅行青蛙、网易云音乐、Telegram、米游签、Compare Share），一并可见。
+> 说明：`FnDepot`（https://github.com/Kasbuky-sudo/FnDepot）是上游打包者的第三方源，
+> 收录的是原版 ZCode 包，**不含本 fork**。本 fork 请用上面的地址或方式二手动安装。
 
 ### 方式二：手动安装 fpk
 
-1. 下载：`https://github.com/Kasbuky-sudo/NAS-ZCode/releases/download/v3.14.4/zcode-3.14.4.fpk`
+1. 下载：`https://github.com/upcyan/NAS-Zcode-cyanmod/releases/download/v3.14.3-3/zcode-3.14.3-3.fpk`
 2. 应用中心 → 手动安装 → 选中该文件
 
 > **包为什么有 78 MB**：里面是完整的官方 Web 运行时（前端 + 服务端 + agent + 依赖），还包括 node-pty、koffi 这类**官方预编译的原生模块——而且是 x86_64 与 arm64 各带一份**，所以一个包就能双架构通吃。第一次安装传包慢一点是正常的，装完就好。
@@ -112,7 +113,7 @@ SHA256  412056ff15c746d40bb8397d77b9309ebabf17e5a547dfc62f41c20b407ee2a2
 
 ---
 
-## 本次更新（v3.14.4）
+## 本次更新
 
 内置 ZCode 运行时仍为上游 3.14.3（GitHub 公开最新），本版重点解决**非局域网环境下打不开**：
 
@@ -128,8 +129,8 @@ SHA256  412056ff15c746d40bb8397d77b9309ebabf17e5a547dfc62f41c20b407ee2a2
    否则服务端取到第一个（旧值）仍会 401——这正是旧版「换令牌/重装后连不上」的成因。
 4. 局域网直连与访问令牌机制**完全保留**，习惯直连的用户不受影响。
 
-> 版本号为什么是 3.14.4 而不是 3.14.3-1：飞牛用 `golang.org/x/mod/semver` 比较版本，
-> 带 `-` 的后缀会被判为 prerelease（比 3.14.3 更小），已装用户会收不到升级。
+> 版本号规则：`<上游 ZCode 版本>-<打包修订号>`，例如 `3.14.3-3`。
+> 上游部分跟官方 runtime 一致，改打包只递增修订号。
 
 ---
 
@@ -146,9 +147,9 @@ SHA256  412056ff15c746d40bb8397d77b9309ebabf17e5a547dfc62f41c20b407ee2a2
 
 | 用途 | 地址 |
 |---|---|
-| 飞牛应用源（推荐） | https://github.com/Kasbuky-sudo/FnDepot |
-| 源码仓库 / 问题反馈 | https://github.com/Kasbuky-sudo/NAS-ZCode |
-| 最新版下载（v3.14.4） | https://github.com/Kasbuky-sudo/NAS-ZCode/releases/tag/v3.14.4 |
+| 源码仓库 / 问题反馈 | https://github.com/upcyan/NAS-Zcode-cyanmod |
+| 上游打包者的应用源（不含本 fork） | https://github.com/Kasbuky-sudo/FnDepot |
+| 最新版下载（v3.14.3-3） | https://github.com/upcyan/NAS-Zcode-cyanmod/releases/tag/v3.14.3-3 |
 | 上游项目 | https://github.com/zai-org/ZCode |
 
 ---
